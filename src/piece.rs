@@ -1,6 +1,6 @@
 use crossterm::style::Color;
 
-use crate::board::{self, Board};
+use crate::board::Board;
 
 #[derive(Copy, Clone)]
 pub enum Shape {
@@ -17,8 +17,8 @@ pub enum Shape {
 pub struct Piece {
     size: usize,
     matrix: Box<[bool]>,
-    l: usize,
-    c: usize,
+    l: i8,
+    c: i8,
     color: Color,
 }
 
@@ -71,7 +71,7 @@ impl Piece {
                 size: 4,
                 matrix: Box::new([
                     false, false, false, false, true, true, true, true, false, false, false, false,
-                    true, true, true, true,
+                    false, false, false, false,
                 ]),
                 l: 0,
                 c: 3,
@@ -84,7 +84,7 @@ impl Piece {
         self.color
     }
 
-    pub fn pos(&self) -> (usize, usize) {
+    pub fn pos(&self) -> (i8, i8) {
         (self.l, self.c)
     }
 
@@ -110,10 +110,19 @@ impl Piece {
         }
     }
 
-    pub fn try_left(&mut self, board: &mut Board) {
-        if self.c == 0 {
-            return;
+    pub fn try_rotate(&mut self, board: &mut Board) {
+        let mut aux = self.clone();
+        aux.rotate();
+        board.remove_piece(self);
+        if board.check_piece(&aux) {
+            board.add_piece(&aux);
+            *self = aux;
+        } else {
+            board.add_piece(self);
         }
+    }
+
+    pub fn try_left(&mut self, board: &mut Board) {
         board.remove_piece(self);
         self.c -= 1;
         if board.check_piece(self) {
@@ -125,9 +134,6 @@ impl Piece {
     }
 
     pub fn try_right(&mut self, board: &mut Board) {
-        if self.c + self.size == board::WIDTH {
-            return;
-        }
         board.remove_piece(self);
         self.c += 1;
         if board.check_piece(self) {
@@ -139,16 +145,13 @@ impl Piece {
     }
 
     pub fn try_down(&mut self, board: &mut Board) -> bool {
-        if self.l + self.size == board::HEIGHT {
-            return false;
-        }
         board.remove_piece(self);
         self.l += 1;
         if board.check_piece(self) {
             board.add_piece(self);
             true
         } else {
-            self.c -= 1;
+            self.l -= 1;
             board.add_piece(self);
             false
         }

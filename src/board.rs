@@ -30,13 +30,24 @@ impl Board {
         Ok(())
     }
 
+    fn valid(l: i8, c: i8) -> bool {
+        l >= 0 && l < HEIGHT as i8 && c >= 0 && c < WIDTH as i8
+    }
+
     pub fn check_piece(&self, piece: &Piece) -> bool {
         let (l, c) = piece.pos();
-        for i in 0..piece.size() {
-            for j in 0..piece.size() {
-                if let Some(_) = self.grid[l + i][c + j]
-                    && piece.get(i, j)
-                {
+        let size = piece.size();
+        for i in 0..size {
+            for j in 0..size {
+                if !piece.get(i, j) {
+                    continue;
+                }
+
+                if !Board::valid(l + i as i8, c + j as i8) {
+                    return false;
+                }
+
+                if let Some(_) = self.grid[(l + i as i8) as usize][(c + j as i8) as usize] {
                     return false;
                 }
             }
@@ -45,11 +56,12 @@ impl Board {
     }
 
     pub fn add_piece(&mut self, piece: &Piece) {
-        for i in 0..piece.size() {
-            for j in 0..piece.size() {
+        let (l, c) = piece.pos();
+        let size = piece.size();
+        for i in 0..size {
+            for j in 0..size {
                 if piece.get(i, j) {
-                    let (l, c) = piece.pos();
-                    self.grid[l + i][c + j] = Some(piece.color());
+                    self.grid[(l + i as i8) as usize][(c + j as i8) as usize] = Some(piece.color());
                 }
             }
         }
@@ -57,10 +69,11 @@ impl Board {
 
     pub fn remove_piece(&mut self, piece: &Piece) {
         let (l, c) = piece.pos();
-        for i in 0..piece.size() {
-            for j in 0..piece.size() {
+        let size = piece.size();
+        for i in 0..size {
+            for j in 0..size {
                 if piece.get(i, j) {
-                    self.grid[l + i][c + j] = None;
+                    self.grid[(l + i as i8) as usize][(c + j as i8) as usize] = None;
                 }
             }
         }
@@ -82,12 +95,15 @@ impl Board {
         }
     }
 
-    pub fn prune(&mut self) {
+    pub fn prune(&mut self) -> u8 {
+        let mut counter = 0;
         for i in 0..HEIGHT {
             if self.check_line(i) {
                 self.prune_line(i);
+                counter += 1;
             }
         }
+        counter
     }
 }
 
