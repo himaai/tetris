@@ -19,14 +19,27 @@ impl Board {
         }
     }
 
-    pub fn draw(&self, buff: &mut impl Write) -> io::Result<()> {
+    pub fn draw(
+        &self,
+        buff: &mut impl Write,
+        (terminal_w, terminal_h): (u16, u16),
+    ) -> io::Result<()> {
+        let start_l = (terminal_h - HEIGHT as u16) / 2;
+        let start_c = (terminal_w - WIDTH as u16 * 2) / 2;
+        buff.queue(cursor::MoveTo(start_c - 1, start_l - 1))?;
+        buff.queue(style::Print("╔════════════════════╗"))?;
         for l in 0..HEIGHT {
+            buff.queue(cursor::MoveTo(start_c - 1, start_l + l as u16))?;
+            buff.queue(style::Print("║"))?;
             for c in 0..WIDTH {
-                let x = (c * 2) as u16;
-                let y = l as u16;
-                draw_cell(x, y, buff, self.grid[l][c])?;
+                let x = start_c + (c * 2) as u16;
+                let y = start_l + l as u16;
+                draw_cell(buff, self.grid[l][c])?;
             }
+            buff.queue(style::Print("║"))?;
         }
+        buff.queue(cursor::MoveTo(start_c - 1, start_l + HEIGHT as u16))?;
+        buff.queue(style::Print("╚════════════════════╝"))?;
         Ok(())
     }
 
@@ -95,7 +108,7 @@ impl Board {
         }
     }
 
-    pub fn prune(&mut self) -> u8 {
+    pub fn prune(&mut self) -> u64 {
         let mut counter = 0;
         for i in 0..HEIGHT {
             if self.check_line(i) {
@@ -107,8 +120,7 @@ impl Board {
     }
 }
 
-pub fn draw_cell(x: u16, y: u16, buff: &mut impl Write, color: Option<Color>) -> io::Result<()> {
-    buff.queue(cursor::MoveTo(x, y))?;
+pub fn draw_cell(buff: &mut impl Write, color: Option<Color>) -> io::Result<()> {
     if let Some(color) = color {
         buff.queue(style::PrintStyledContent("[]".with(color)))?;
     } else {

@@ -100,7 +100,7 @@ impl Piece {
         self.matrix[self.size * l + c] = set;
     }
 
-    pub fn rotate(&mut self) {
+    pub fn clockwise(&mut self) {
         let aux = self.clone();
 
         for i in 0..self.size {
@@ -110,48 +110,38 @@ impl Piece {
         }
     }
 
-    pub fn try_rotate(&mut self, board: &mut Board) {
+    pub fn counterclockwise(&mut self) {
+        let aux = self.clone();
+
+        for i in 0..self.size {
+            for j in 0..self.size {
+                self.set(i, j, aux.get(j, self.size() - i - 1));
+            }
+        }
+    }
+
+    pub fn down(&mut self) {
+        self.l += 1;
+    }
+
+    pub fn left(&mut self) {
+        self.c -= 1;
+    }
+
+    pub fn right(&mut self) {
+        self.c += 1;
+    }
+
+    pub fn try_moving(&mut self, f: impl FnOnce(&mut Self) -> (), board: &mut Board) -> bool {
         let mut aux = self.clone();
-        aux.rotate();
+        f(&mut aux);
+
         board.remove_piece(self);
         if board.check_piece(&aux) {
-            board.add_piece(&aux);
             *self = aux;
-        } else {
-            board.add_piece(self);
-        }
-    }
-
-    pub fn try_left(&mut self, board: &mut Board) {
-        board.remove_piece(self);
-        self.c -= 1;
-        if board.check_piece(self) {
-            board.add_piece(self);
-        } else {
-            self.c += 1;
-            board.add_piece(self);
-        }
-    }
-
-    pub fn try_right(&mut self, board: &mut Board) {
-        board.remove_piece(self);
-        self.c += 1;
-        if board.check_piece(self) {
-            board.add_piece(self);
-        } else {
-            self.c -= 1;
-            board.add_piece(self);
-        }
-    }
-
-    pub fn try_down(&mut self, board: &mut Board) -> bool {
-        board.remove_piece(self);
-        self.l += 1;
-        if board.check_piece(self) {
             board.add_piece(self);
             true
         } else {
-            self.l -= 1;
             board.add_piece(self);
             false
         }
