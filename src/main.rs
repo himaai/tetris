@@ -3,14 +3,14 @@ mod piece;
 
 use crossterm::{
     QueueableCommand,
-    cursor::{Hide, Show},
+    cursor::{self, Hide, Show},
     event::{self, Event, KeyCode, KeyEvent},
-    terminal::{self, Clear, EnterAlternateScreen, LeaveAlternateScreen},
+    style::Print,
+    terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use rand::{Rng, seq::SliceRandom};
 use std::{
-    error::Error,
-    io::{self, Write, stdout},
+    io::{self, Cursor, Result, Write, stdout},
     thread,
     time::{Duration, Instant},
 };
@@ -18,23 +18,34 @@ use std::{
 use board::Board;
 use piece::{Piece, Shape};
 
+use crate::board::WIDTH;
+
 const FPS: u64 = 30;
 const FRAME_TIME: Duration = Duration::from_millis(1000 / FPS);
 
+pub type TermPos = (u16, u16);
+
 struct Bag {
-    list: [Shape; 7],
+    list: [&'static Shape; 7],
     read: usize,
 }
 
 impl Bag {
     pub fn genereate(rng: &mut impl rand::Rng) -> Self {
-        use Shape as Sh;
-        let mut list = [Sh::O, Sh::S, Sh::Z, Sh::T, Sh::L, Sh::J, Sh::I];
+        let mut list = [
+            &piece::O_SHAPE,
+            &piece::S_SHAPE,
+            &piece::Z_SHAPE,
+            &piece::T_SHAPE,
+            &piece::L_SHAPE,
+            &piece::J_SHAPE,
+            &piece::I_SHAPE,
+        ];
         list.shuffle(rng);
         Self { list, read: 0 }
     }
 
-    pub fn next(&mut self, rng: &mut impl rand::Rng) -> Shape {
+    pub fn next(&mut self, rng: &mut impl rand::Rng) -> &'static Shape {
         if self.read == 7 {
             *self = Self::genereate(rng);
         }
@@ -45,15 +56,14 @@ impl Bag {
 
 struct Game {
     board: Board,
-    speed: Duration,
     active_piece: Piece,
     bag: Bag,
+    speed: Duration,
     timer: Duration,
     pub is_over: bool,
     level: u64,
     pub score: u64,
     cleared_cnt: u64,
-    pub term_size: (u16, u16),
 }
 
 fn calculate_speed(level: u64) -> Duration {
@@ -61,70 +71,84 @@ fn calculate_speed(level: u64) -> Duration {
 }
 
 impl Game {
-    fn init(rng: &mut impl rand::Rng, term_size: (u16, u16)) -> Self {
+    fn init(rng: &mut impl rand::Rng, term_size: TermPos) -> Self {
         let mut bag = Bag::genereate(rng);
         let active_piece = Piece::new(bag.next(rng));
-        let mut board = Board::new();
-        let level: u64 = 0;
-        let speed = calculate_speed(level);
-        board.add_piece(&active_piece);
+
         Self {
-            board,
+            board: Board::new(term_size),
             timer: Duration::ZERO,
-            speed,
+            speed: calculate_speed(0),
             is_over: false,
             active_piece,
             bag,
-            level,
+            level: 0,
             score: 0,
             cleared_cnt: 0,
-            term_size,
         }
     }
 
     fn draw(&self, stdout: &mut impl Write) -> io::Result<()> {
-        self.board.draw(stdout, self.term_size)
+        self.board.draw(stdout)?;
+        self.active_piece.draw(stdout, &self.board)?;
+        let (x, y) = (self.board.pos.0 + WIDTH as u16 * 2 + 3, self.board.pos.1);
+        stdout
+            .queue(cursor::MoveTo(x, y))?
+            .queue(Print(format!("Score: {}", self.score)))?
+            .queue(cursor::MoveTo(x, y + 1))?
+            .queue(Print(format!("Level: {}", self.level)))?
+            .queue(cursor::MoveTo(x, y + 2))?
+            .queue(Print(format!("Lines: {}", self.cleared_cnt)))?
+            .queue(cursor::MoveTo(x, y + 4))?
+            .queue(Print("q - quit, p - pause"))?
+            .queue(cursor::MoveTo(x, y + 5))?
+            .queue(Print("move: h - left, l - rigth"))?
+            .queue(cursor::MoveTo(x, y + 6))?
+            .queue(Print("rotate: k - right, K - left"))?
+            .queue(cursor::MoveTo(x, y + 7))?
+            .queue(Print("drop: j - soft, J - hard"))?;
+        Ok(())
     }
 
-    fn handle_input(&mut self, event: &Event) {
-        let Event::Key(KeyEvent {
-            code,
-            modifiers: _,
-            kind: _,
-            state: _,
-        }) = event
-        else {
-            return;
-        };
-        match code {
-            KeyCode::Char('q') => {
-                self.is_over = true;
+    fn handle_input(&mut self, event: &Event, stdout: &mut impl Write) -> Result<()> {
+        match event {
+            Event::Resize(x, y) => {
+                stdout.queue(Clear(ClearType::All))?;
+                self.board.pos = Board::calculate_pos((*x, *y));
             }
-            KeyCode::Char('h') => {
-                self.active_piece.try_moving(Piece::left, &mut self.board);
-            }
-            KeyCode::Char('j') => {
-                if self.active_piece.try_moving(Piece::down, &mut self.board) {
-                    self.timer = Duration::ZERO;
+            Event::Key(KeyEvent {
+                code,
+                modifiers: _,
+                kind: _,
+                state: _,
+            }) => match code {
+                KeyCode::Char('q') => {
+                    self.is_over = true;
                 }
-            }
-            KeyCode::Char('k') => {
-                self.active_piece
-                    .try_moving(Piece::clockwise, &mut self.board);
-            }
-            KeyCode::Char('K') => {
-                if self
-                    .active_piece
-                    .try_moving(Piece::counterclockwise, &mut self.board)
-                {
-                    self.timer = Duration::ZERO;
+                KeyCode::Char('h') => {
+                    self.active_piece.try_move(Piece::left, &mut self.board);
                 }
-            }
-            KeyCode::Char('l') => {
-                self.active_piece.try_moving(Piece::right, &mut self.board);
-            }
+                KeyCode::Char('l') => {
+                    self.active_piece.try_move(Piece::right, &mut self.board);
+                }
+                KeyCode::Char('j') => {
+                    if self.active_piece.try_move(Piece::down, &mut self.board) {
+                        self.timer = Duration::ZERO;
+                    }
+                }
+                KeyCode::Char('k') => {
+                    self.active_piece
+                        .try_move(Piece::rotate_right, &mut self.board);
+                }
+                KeyCode::Char('K') => {
+                    self.active_piece
+                        .try_move(Piece::rotate_left, &mut self.board);
+                }
+                _ => {}
+            },
             _ => {}
         }
+        Ok(())
     }
 
     fn update(&mut self, rng: &mut impl Rng) {
@@ -134,62 +158,57 @@ impl Game {
         }
         self.timer -= self.speed;
 
-        if !self.active_piece.try_moving(Piece::down, &mut self.board) {
-            let cleared = self.board.prune();
-            match cleared {
-                1 => self.score += 40 * (self.level + 1),
-                2 => self.score += 100 * (self.level + 1),
-                3 => self.score += 300 * (self.level + 1),
-                4 => self.score += 1200 * (self.level + 1),
-                _ => {}
-            };
-            self.cleared_cnt += cleared;
-            if self.cleared_cnt >= 10 {
-                self.cleared_cnt -= 10;
-                self.level += 1;
-                self.speed = calculate_speed(self.level);
-            }
-
-            self.active_piece = Piece::new(self.bag.next(rng));
-            if !self.board.check_piece(&self.active_piece) {
-                self.is_over = true;
-            }
-            self.board.add_piece(&self.active_piece);
+        if self.active_piece.try_move(Piece::down, &mut self.board) {
+            return;
         };
+        self.board.add_piece(&self.active_piece);
+
+        let cleared = self.board.prune();
+        match cleared {
+            1 => self.score += 40 * (self.level + 1),
+            2 => self.score += 100 * (self.level + 1),
+            3 => self.score += 300 * (self.level + 1),
+            4 => self.score += 1200 * (self.level + 1),
+            _ => {}
+        };
+        self.cleared_cnt += cleared;
+        if self.cleared_cnt >= 10 {
+            self.cleared_cnt -= 10;
+            self.level += 1;
+            self.speed = calculate_speed(self.level);
+        }
+
+        self.active_piece = Piece::new(self.bag.next(rng));
+        if !self.board.check_piece(&self.active_piece) {
+            self.is_over = true;
+        }
     }
 }
 
-fn run(stdout: &mut impl Write) -> Result<u64, Box<dyn Error>> {
+fn run(stdout: &mut impl Write) -> io::Result<u64> {
     let mut rng = rand::rng();
     let mut game = Game::init(&mut rng, terminal::size()?);
     loop {
-        let start = Instant::now();
+        let timer = Instant::now();
 
-        let term_size = terminal::size()?;
-        if term_size != game.term_size {
-            stdout.queue(Clear(terminal::ClearType::All))?;
-            game.term_size = term_size;
-        }
         game.draw(stdout)?;
         stdout.flush()?;
 
         while event::poll(Duration::ZERO)? {
-            game.handle_input(&event::read()?);
+            game.handle_input(&event::read()?, stdout)?;
         }
-
         game.update(&mut rng);
-
         if game.is_over {
             break Ok(game.score);
         }
 
-        if start.elapsed() < FRAME_TIME {
-            thread::sleep(FRAME_TIME - start.elapsed());
+        if timer.elapsed() < FRAME_TIME {
+            thread::sleep(FRAME_TIME - timer.elapsed());
         }
     }
 }
 
-fn setup_terminal(stdout: &mut impl Write) -> Result<(), Box<dyn Error>> {
+fn setup_terminal(stdout: &mut impl Write) -> io::Result<()> {
     terminal::enable_raw_mode()?;
     stdout.queue(EnterAlternateScreen)?;
     stdout.queue(Clear(terminal::ClearType::All))?;
@@ -198,7 +217,7 @@ fn setup_terminal(stdout: &mut impl Write) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn restore_terminal(stdout: &mut impl Write) -> Result<(), Box<dyn Error>> {
+fn restore_terminal(stdout: &mut impl Write) -> io::Result<()> {
     stdout.queue(Show)?;
     stdout.queue(Clear(terminal::ClearType::All))?;
     stdout.queue(LeaveAlternateScreen)?;

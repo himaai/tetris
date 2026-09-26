@@ -1,149 +1,163 @@
-use crossterm::style::Color;
-
-use crate::board::Board;
+use crate::{
+    TermPos,
+    board::{self, Board, BoardPos},
+};
+use crossterm::{
+    QueueableCommand, cursor,
+    style::{Color, PrintStyledContent, Stylize},
+};
+use std::io::{Result, Write};
 
 #[derive(Copy, Clone)]
-pub enum Shape {
-    O,
+pub enum Rotation {
+    N,
+    E,
     S,
-    Z,
-    T,
-    L,
-    J,
-    I,
+    W,
+}
+
+#[derive(Clone)]
+pub struct Shape {
+    grid: [[u8; 4]; 4],
+    pub size: usize,
+    pub color: Color,
 }
 
 #[derive(Clone)]
 pub struct Piece {
-    size: usize,
-    matrix: Box<[bool]>,
-    l: i8,
-    c: i8,
-    color: Color,
+    shape: &'static Shape,
+    pub board_pos: BoardPos,
+    pub rotation: Rotation,
+}
+
+pub const O_SHAPE: Shape = Shape {
+    size: 2,
+    grid: [[1, 1, 0, 0], [1, 1, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]],
+    color: Color::Yellow,
+};
+pub const S_SHAPE: Shape = Shape {
+    size: 3,
+    grid: [[0, 1, 1, 0], [1, 1, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]],
+    color: Color::Green,
+};
+pub const Z_SHAPE: Shape = Shape {
+    size: 3,
+    grid: [[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 0, 0], [0, 0, 0, 0]],
+    color: Color::Red,
+};
+pub const T_SHAPE: Shape = Shape {
+    size: 3,
+    grid: [[0, 1, 0, 0], [1, 1, 1, 0], [0, 0, 0, 0], [0, 0, 0, 0]],
+    color: Color::Magenta,
+};
+pub const L_SHAPE: Shape = Shape {
+    size: 3,
+    grid: [[0, 0, 1, 0], [1, 1, 1, 0], [0, 0, 0, 0], [0, 0, 0, 0]],
+    color: Color::DarkYellow,
+};
+pub const J_SHAPE: Shape = Shape {
+    size: 3,
+    grid: [[1, 0, 0, 0], [1, 1, 1, 0], [0, 0, 0, 0], [0, 0, 0, 0]],
+    color: Color::Blue,
+};
+pub const I_SHAPE: Shape = Shape {
+    size: 4,
+    grid: [[0, 0, 0, 0], [1, 1, 1, 1], [0, 0, 0, 0], [0, 0, 0, 0]],
+    color: Color::Cyan,
+};
+
+impl Shape {
+    fn get(&self, l: usize, c: usize, rotation: Rotation) -> bool {
+        let last = self.size - 1;
+        0 != match rotation {
+            Rotation::N => self.grid[l][c],
+            Rotation::E => self.grid[c][last - l],
+            Rotation::S => self.grid[last - l][last - c],
+            Rotation::W => self.grid[last - c][l],
+        }
+    }
+
+    pub fn draw(&self, stdout: &mut impl Write, (x, y): TermPos, rotation: Rotation) -> Result<()> {
+        for i in 0..self.size {
+            stdout.queue(cursor::MoveTo(x, y + i as u16))?;
+            for j in 0..self.size {
+                if self.get(i, j, rotation) {
+                    stdout.queue(PrintStyledContent("[]".with(self.color)))?;
+                } else {
+                    stdout.queue(cursor::MoveRight(2))?;
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Piece {
-    pub fn new(shape: Shape) -> Self {
-        match shape {
-            Shape::O => Self {
-                size: 2,
-                matrix: Box::new([true, true, true, true]),
-                l: 0,
-                c: 4,
-                color: Color::Yellow,
-            },
-            Shape::S => Self {
-                size: 3,
-                matrix: Box::new([false, true, true, true, true, false, false, false, false]),
-                l: 0,
-                c: 3,
-                color: Color::Green,
-            },
-            Shape::Z => Self {
-                size: 3,
-                matrix: Box::new([true, true, false, false, true, true, false, false, false]),
-                l: 0,
-                c: 3,
-                color: Color::Red,
-            },
-            Shape::T => Self {
-                size: 3,
-                matrix: Box::new([false, true, false, true, true, true, false, false, false]),
-                l: 0,
-                c: 3,
-                color: Color::Magenta,
-            },
-            Shape::L => Self {
-                size: 3,
-                matrix: Box::new([false, false, true, true, true, true, false, false, false]),
-                l: 0,
-                c: 3,
-                color: Color::DarkYellow,
-            },
-            Shape::J => Self {
-                size: 3,
-                matrix: Box::new([true, false, false, true, true, true, false, false, false]),
-                l: 0,
-                c: 3,
-                color: Color::Blue,
-            },
-            Shape::I => Self {
-                size: 4,
-                matrix: Box::new([
-                    false, false, false, false, true, true, true, true, false, false, false, false,
-                    false, false, false, false,
-                ]),
-                l: 0,
-                c: 3,
-                color: Color::Cyan,
-            },
+    pub fn new(shape: &'static Shape) -> Self {
+        Self {
+            shape,
+            board_pos: (0, (board::WIDTH - shape.size) as i16 / 2),
+            rotation: Rotation::N,
         }
     }
 
-    pub fn color(&self) -> Color {
-        self.color
-    }
-
-    pub fn pos(&self) -> (i8, i8) {
-        (self.l, self.c)
-    }
-
-    pub fn size(&self) -> usize {
-        self.size
+    pub fn draw(&self, stdout: &mut impl Write, board: &Board) -> Result<()> {
+        let (x, y) = board.pos;
+        let (l, c) = self.board_pos;
+        self.shape.draw(
+            stdout,
+            ((x as i16 + c * 2) as u16, (y as i16 + l) as u16),
+            self.rotation,
+        )
     }
 
     pub fn get(&self, l: usize, c: usize) -> bool {
-        self.matrix[self.size * l + c]
+        self.shape.get(l, c, self.rotation)
     }
 
-    fn set(&mut self, l: usize, c: usize, set: bool) {
-        self.matrix[self.size * l + c] = set;
+    pub fn rotate_right(&mut self) {
+        self.rotation = match self.rotation {
+            Rotation::N => Rotation::E,
+            Rotation::E => Rotation::S,
+            Rotation::S => Rotation::W,
+            Rotation::W => Rotation::N,
+        };
     }
 
-    pub fn clockwise(&mut self) {
-        let aux = self.clone();
-
-        for i in 0..self.size {
-            for j in 0..self.size {
-                self.set(i, j, aux.get(self.size - j - 1, i));
-            }
-        }
-    }
-
-    pub fn counterclockwise(&mut self) {
-        let aux = self.clone();
-
-        for i in 0..self.size {
-            for j in 0..self.size {
-                self.set(i, j, aux.get(j, self.size() - i - 1));
-            }
-        }
+    pub fn rotate_left(&mut self) {
+        self.rotation = match self.rotation {
+            Rotation::N => Rotation::W,
+            Rotation::E => Rotation::N,
+            Rotation::S => Rotation::E,
+            Rotation::W => Rotation::S,
+        };
     }
 
     pub fn down(&mut self) {
-        self.l += 1;
+        self.board_pos.0 += 1;
     }
 
     pub fn left(&mut self) {
-        self.c -= 1;
+        self.board_pos.1 -= 1;
     }
 
     pub fn right(&mut self) {
-        self.c += 1;
+        self.board_pos.1 += 1;
     }
 
-    pub fn try_moving(&mut self, f: impl FnOnce(&mut Self) -> (), board: &mut Board) -> bool {
+    pub fn try_move(&mut self, f: impl FnOnce(&mut Self) -> (), board: &mut Board) -> bool {
         let mut aux = self.clone();
         f(&mut aux);
 
-        board.remove_piece(self);
         if board.check_piece(&aux) {
             *self = aux;
-            board.add_piece(self);
             true
         } else {
-            board.add_piece(self);
             false
         }
+    }
+
+    pub fn shape(&self) -> &Shape {
+        &self.shape
     }
 }

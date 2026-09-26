@@ -1,4 +1,4 @@
-use crate::piece::Piece;
+use crate::{TermPos, piece::Piece};
 use crossterm::{
     QueueableCommand, cursor,
     style::{self, Color, Stylize},
@@ -8,59 +8,66 @@ use std::io::{self, Write};
 pub const WIDTH: usize = 10;
 pub const HEIGHT: usize = 20;
 
+pub type BoardPos = (i16, i16);
+
 pub struct Board {
     grid: [[Option<Color>; WIDTH]; HEIGHT],
+    pub pos: TermPos,
 }
 
 impl Board {
-    pub fn new() -> Self {
+    pub fn new(term_size: TermPos) -> Self {
         Self {
             grid: [[None; WIDTH]; HEIGHT],
+            pos: Self::calculate_pos(term_size),
         }
     }
 
-    pub fn draw(
-        &self,
-        buff: &mut impl Write,
-        (terminal_w, terminal_h): (u16, u16),
-    ) -> io::Result<()> {
-        let start_l = (terminal_h - HEIGHT as u16) / 2;
-        let start_c = (terminal_w - WIDTH as u16 * 2) / 2;
-        buff.queue(cursor::MoveTo(start_c - 1, start_l - 1))?;
+    pub fn calculate_pos((term_w, term_h): TermPos) -> TermPos {
+        (
+            (term_w - WIDTH as u16 * 2) / 2,
+            (term_h - HEIGHT as u16) / 2,
+        )
+    }
+
+    pub fn draw(&self, buff: &mut impl Write) -> io::Result<()> {
+        let (x, y) = (self.pos.0, self.pos.1);
+        buff.queue(cursor::MoveTo(x - 1, y - 1))?;
         buff.queue(style::Print("╔════════════════════╗"))?;
+
         for l in 0..HEIGHT {
-            buff.queue(cursor::MoveTo(start_c - 1, start_l + l as u16))?;
+            buff.queue(cursor::MoveTo(x - 1, y + l as u16))?;
             buff.queue(style::Print("║"))?;
             for c in 0..WIDTH {
-                let x = start_c + (c * 2) as u16;
-                let y = start_l + l as u16;
                 draw_cell(buff, self.grid[l][c])?;
             }
             buff.queue(style::Print("║"))?;
         }
-        buff.queue(cursor::MoveTo(start_c - 1, start_l + HEIGHT as u16))?;
+
+        buff.queue(cursor::MoveTo(x - 1, y + HEIGHT as u16))?;
         buff.queue(style::Print("╚════════════════════╝"))?;
+
         Ok(())
     }
 
-    fn valid(l: i8, c: i8) -> bool {
-        l >= 0 && l < HEIGHT as i8 && c >= 0 && c < WIDTH as i8
+    fn valid(l: i16, c: i16) -> bool {
+        l >= 0 && l < HEIGHT as i16 && c >= 0 && c < WIDTH as i16
     }
 
     pub fn check_piece(&self, piece: &Piece) -> bool {
-        let (l, c) = piece.pos();
-        let size = piece.size();
+        let size = piece.shape().size;
+        let (l, c) = piece.board_pos;
         for i in 0..size {
             for j in 0..size {
                 if !piece.get(i, j) {
                     continue;
                 }
 
-                if !Board::valid(l + i as i8, c + j as i8) {
+                if !Board::valid(l + i as i16, c + j as i16) {
                     return false;
                 }
 
-                if let Some(_) = self.grid[(l + i as i8) as usize][(c + j as i8) as usize] {
+                if let Some(_) = self.grid[(l + i as i16) as usize][(c + j as i16) as usize] {
                     return false;
                 }
             }
@@ -69,50 +76,26 @@ impl Board {
     }
 
     pub fn add_piece(&mut self, piece: &Piece) {
-        let (l, c) = piece.pos();
-        let size = piece.size();
+        let size = piece.shape().size;
+        let (l, c) = piece.board_pos;
         for i in 0..size {
             for j in 0..size {
                 if piece.get(i, j) {
-                    self.grid[(l + i as i8) as usize][(c + j as i8) as usize] = Some(piece.color());
+                    self.grid[(l + i as i16) as usize][(c + j as i16) as usize] =
+                        Some(piece.shape().color);
                 }
             }
-        }
-    }
-
-    pub fn remove_piece(&mut self, piece: &Piece) {
-        let (l, c) = piece.pos();
-        let size = piece.size();
-        for i in 0..size {
-            for j in 0..size {
-                if piece.get(i, j) {
-                    self.grid[(l + i as i8) as usize][(c + j as i8) as usize] = None;
-                }
-            }
-        }
-    }
-
-    fn check_line(&self, l: usize) -> bool {
-        for cell in self.grid[l] {
-            if let None = cell {
-                return false;
-            }
-        }
-        true
-    }
-
-    fn prune_line(&mut self, l: usize) {
-        self.grid[0] = [None; WIDTH];
-        for i in (1..l + 1).rev() {
-            self.grid[i] = self.grid[i - 1].clone();
         }
     }
 
     pub fn prune(&mut self) -> u64 {
+        let mut j = HEIGHT;
         let mut counter = 0;
-        for i in 0..HEIGHT {
-            if self.check_line(i) {
-                self.prune_line(i);
+        for i in (0..HEIGHT).rev() {
+            if self.grid[i].contains(&None) {
+                j -= 1;
+                self.grid[j] = self.grid[i];
+            } else {
                 counter += 1;
             }
         }
